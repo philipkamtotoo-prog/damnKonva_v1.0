@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id              String           @id @default(cuid())
+  username        String           @unique
+  passwordHash    String
+  isApiAdmin      Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  projects        Project[]
+  assets          Asset[]
+  whiteboardItems WhiteboardItem[]
+  arrowLinks      ArrowLink[]
+  apiConfigs      ApiConfig[]
+}
+
+model Project {
+  id              String           @id @default(cuid())
+  name            String
+  createdBy       String
+  user            User             @relation(fields: [createdBy], references: [id])
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  assets          Asset[]
+  whiteboardItems WhiteboardItem[]
+  arrowLinks      ArrowLink[]
+}
+
+model Asset {
+  id             String           @id @default(cuid())
+  projectId      String
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type           String           // 'image' | 'video'
+  name           String
+  status         String           // 'queued' | 'processing' | 'success' | 'failed'
+  thumbnailUrl   String?
+  originalUrl    String?
+  prompt         String
+  negativePrompt String?
+  model          String?
+  params         String?          // JSON stored as string
+  createdBy      String
+  user           User             @relation(fields: [createdBy], references: [id])
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  
+  whiteboardItems WhiteboardItem[]
+}
+
+model WhiteboardItem {
+  id             String           @id @default(cuid())
+  projectId      String
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  itemType       String           // 'asset' | 'text' | 'note'
+  refId          String?          // Foreign key to Asset
+  asset          Asset?           @relation(fields: [refId], references: [id], onDelete: SetNull)
+  x              Float
+  y              Float
+  width          Float?
+  height         Float?
+  zIndex         Int              @default(0)
+  content        String?
+  fontSize       Float?
+  createdBy      String
+  user           User             @relation(fields: [createdBy], references: [id])
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  fromArrows     ArrowLink[]      @relation("fromItem")
+  toArrows       ArrowLink[]      @relation("toItem")
+}
+
+model ArrowLink {
+  id             String           @id @default(cuid())
+  projectId      String
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fromItemId     String
+  fromItem       WhiteboardItem   @relation("fromItem", fields: [fromItemId], references: [id], onDelete: Cascade)
+  toItemId       String
+  toItem         WhiteboardItem   @relation("toItem", fields: [toItemId], references: [id], onDelete: Cascade)
+  createdBy      String
+  user           User             @relation(fields: [createdBy], references: [id])
+  createdAt      DateTime         @default(now())
+}
+
+model ApiConfig {
+  id              String           @id @default(cuid())
+  type            String           // 'image' | 'video'
+  baseUrl         String
+  apiKeyEncrypted String
+  defaultModel    String?
+  extraParams     String?          // JSON stored as string
+  updatedBy       String
+  user            User             @relation(fields: [updatedBy], references: [id])
+  updatedAt       DateTime         @updatedAt
+}
