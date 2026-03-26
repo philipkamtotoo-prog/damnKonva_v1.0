@@ -14,9 +14,9 @@ export function encrypt(text: string) {
   return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`
 }
 
-export function decrypt(hash: string) {
+export function decrypt(hash: string): string {
   const parts = hash.split(':')
-  if (parts.length !== 3) return ''
+  if (parts.length !== 3) throw new Error(`decrypt: invalid encrypted value format, expected 3 parts separated by ':', got ${parts.length}`)
   const iv = Buffer.from(parts[0], 'hex')
   const authTag = Buffer.from(parts[1], 'hex')
   const encryptedText = Buffer.from(parts[2], 'hex')

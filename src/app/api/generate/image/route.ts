@@ -19,19 +19,23 @@ export async function POST(req: Request) {
   try {
     const { projectId, prompt, negativePrompt, size, n, image } = await req.json()
 
-    const config = await prisma.apiConfig.findFirst({ where: { type: 'image' } })
+    const config = await prisma.apiConfig.findFirst({ where: { type: 'image', enabled: true } })
     if (!config || !config.baseUrl || !config.apiKeyEncrypted) {
       return NextResponse.json({ error: '系统尚未配置生图 API，请联系管理员在指控中心设置。' }, { status: 400 })
     }
 
     const apiKey = decrypt(config.apiKeyEncrypted)
+    if (!apiKey) {
+      return NextResponse.json({ error: 'API Key 解密失败，请检查 JWT_SECRET 环境变量是否与加密时一致。' }, { status: 500 })
+    }
     const baseUrl = config.baseUrl.replace(/\/+$/, '')
 
     const nInt = Number(n) || 1
     const sizeStr = size?.trim() || '1024x1024'
+    // 火山引擎接受大分辨率（如 2560x1440 / 3840x2160），不再用 DALL-E 的 2048 上限截断
     const [widthStr, heightStr] = sizeStr.split('x')
-    const width = Math.max(256, Math.min(2048, Number(widthStr) || 1024))
-    const height = Math.max(256, Math.min(2048, Number(heightStr) || 1024))
+    const width = Number(widthStr) || 1024
+    const height = Number(heightStr) || 1024
 
     const model = config.defaultModel || 'dall-e-3'
     const combinedPrompt = prompt + (negativePrompt ? ` (Avoid strictly: ${negativePrompt})` : '')
@@ -137,32 +141,79 @@ export async function POST(req: Request) {
       }
     } else {
       // ── OpenAI /images/generations 格式 ──────────────────────────────
-      const openaiRes = await fetch(`${baseUrl}/images/generations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          prompt: combinedPrompt,
-          n: nInt,
-          size: sizeStr,
-          response_format: 'url',
-          ...(image ? { image } : {})
-        }),
-      })
+      // Ksyun/火山要求最小 3,686,400 像素，宽×高 < 该值时自动放大
+      const MIN_PIXELS = 3686400
+      const pixels = width * height
+      const safeW = pixels < MIN_PIXELS ? Math.max(width, Math.ceil(Math.sqrt(MIN_PIXELS))) : width
+      const safeH = pixels < MIN_PIXELS ? Math.max(height, Math.ceil(Math.sqrt(MIN_PIXELS))) : height
+      const safeSize = `${safeW}x${safeH}`
 
-      if (!openaiRes.ok) {
-        const errText = await openaiRes.text()
-        console.error('OpenAI Interface Error:', errText)
-        throw new Error(`上游生成服务异常(${openaiRes.status}): ${errText.substring(0, 200)}`)
+      // 稳健 URL 清洗：取 origin（协议+域名），丢弃管理员填的多余路径
+      const imgUrl = (() => {
+        const pathSuffix = '/images/generations'
+        const clean = baseUrl.replace(/\/+$/, '')
+        if (clean.includes(pathSuffix)) return clean
+        return `${clean}${pathSuffix}`
+      })()
+
+      const singleReqBody = {
+        model,
+        prompt: combinedPrompt,
+        size: safeSize,
+        response_format: 'url',
+        watermark: false,
+        sequential_image_generation: 'disabled',
+        ...(image ? { image } : {}),
       }
 
-      const openaiData = await openaiRes.json()
-      urls = openaiData.data?.map((d: any) => d.url || d.b64_json).filter(Boolean) || []
-
-      if (urls.length === 0) throw new Error('服务成功返回但未提取到有效媒体路径')
+      if (nInt === 1) {
+        // 单图：直接请求
+        const openaiRes = await fetch(imgUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(singleReqBody),
+        })
+        if (!openaiRes.ok) {
+          const errText = await openaiRes.text()
+          console.error('生图请求失败:', openaiRes.status, errText)
+          throw new Error(`上游生图服务异常(${openaiRes.status}): ${errText.substring(0, 300)}`)
+        }
+        const openaiData = await openaiRes.json()
+        const rawData = openaiData.data || []
+        const validItems = rawData.filter((d: any) => !d.error)
+        urls = validItems.map((d: any) => d.url || d.b64_json).filter(Boolean)
+      } else {
+        // 多图：并发 n 次请求，火山单次只返回 1 张
+        const requests = Array.from({ length: nInt }, () =>
+          fetch(imgUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify(singleReqBody),
+          })
+        )
+        const results = await Promise.allSettled(requests)
+        let successCount = 0, failCount = 0
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            const res = result.value
+            if (!res.ok) {
+              failCount++
+              console.error('某张图请求失败:', res.status, await res.text())
+              continue
+            }
+            const data = await res.json()
+            const validItems = (data.data || []).filter((d: any) => !d.error)
+            const extracted = validItems.map((d: any) => d.url || d.b64_json).filter(Boolean)
+            urls.push(...extracted)
+            successCount++
+          } else {
+            failCount++
+            console.error('某张图请求异常:', result.reason)
+          }
+        }
+        console.log(`多图并发: 请求 ${nInt} 张，成功 ${successCount} 张，失败 ${failCount} 张`)
+        if (urls.length === 0) throw new Error('所有图片生成均失败')
+      }
     }
 
     // ── 入库 ──────────────────────────────────────────────────────────────

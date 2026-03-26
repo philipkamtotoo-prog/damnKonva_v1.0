@@ -4,7 +4,7 @@ export type Point = { x: number; y: number }
 
 export type WhiteboardItem = {
   id: string
-  itemType: 'asset' | 'text' | 'note'
+  itemType: 'asset' | 'text' | 'note' | 'video'
   x: number
   y: number
   width?: number
@@ -45,6 +45,9 @@ interface WhiteboardState {
   setArrows: (arrows: ArrowLink[]) => void
   bringToFront: (id: string) => void
   sendToBack: (id: string) => void
+  isReadOnly: boolean
+  lockOwner: string | null
+  setReadOnly: (readOnly: boolean, lockOwner?: string | null) => void
 }
 
 export const useWhiteboardStore = create<WhiteboardState>((set) => ({
@@ -84,5 +87,8 @@ export const useWhiteboardStore = create<WhiteboardState>((set) => ({
     if (!item) return state
     const minZ = Math.min(...state.items.map(i => i.zIndex), 0)
     return { items: state.items.map(i => i.id === id ? { ...i, zIndex: minZ - 1 } : i) }
-  })
+  }),
+  isReadOnly: false,
+  lockOwner: null,
+  setReadOnly: (readOnly, lockOwner = null) => set({ isReadOnly: readOnly, lockOwner }),
 }))

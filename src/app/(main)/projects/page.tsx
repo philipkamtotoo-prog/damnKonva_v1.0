@@ -85,8 +85,10 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-8 font-sans">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-zinc-950 text-white p-8 font-sans relative" style={{ backgroundImage: "url('/主页背景.jpeg')", backgroundSize: 'cover', backgroundPosition: 'center' }}>
+      {/* 深色遮罩保证文字可读 */}
+      <div className="absolute inset-0 bg-black/60"></div>
+      <div className="relative z-10 max-w-6xl mx-auto">
         <div className="flex justify-between items-center mb-8 bg-zinc-900 border border-zinc-800 p-4 rounded-xl shadow-lg">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-emerald-500/20 rounded-lg flex items-center justify-center border border-emerald-500/30">

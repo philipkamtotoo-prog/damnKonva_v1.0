@@ -4,19 +4,66 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Stage, Layer, Arrow } from 'react-konva'
 import { useWhiteboardStore, WhiteboardItem } from '@/store/whiteboard'
-import { AssetItem, TextItem, NoteItem, ArrowItem } from './WhiteboardElements'
+import { AssetItem, TextItem, NoteItem, ArrowItem, VideoProxyItem } from './WhiteboardElements'
+
+// ============================================================
+// 第二步：HtmlVideoItem — DOM 视频渲染层
+// 通过 window 事件 toggle 播放/暂停，坐标跟随 camera + item 位置
+// ============================================================
+function HtmlVideoItem({ item, camera }: { item: WhiteboardItem; camera: { x: number; y: number; scale: number } }) {
+  const vidRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<{ id: string }>
+      if (custom.detail.id !== item.id) return
+      const vid = vidRef.current
+      if (!vid) return
+      if (vid.paused) {
+        vid.play().then(() => {}).catch(() => {})
+      } else {
+        vid.pause()
+      }
+    }
+    window.addEventListener('whiteboard:video:toggle', handler)
+    return () => window.removeEventListener('whiteboard:video:toggle', handler)
+  }, [item.id])
+
+  const left = item.x * camera.scale + camera.x
+  const top = item.y * camera.scale + camera.y
+
+  return (
+    <video
+      ref={vidRef}
+      src={item.content}
+      muted
+      loop
+      playsInline
+      style={{
+        position: 'absolute',
+        left,
+        top,
+        width: (item.width || 300) * camera.scale,
+        height: (item.height || 200) * camera.scale,
+        transformOrigin: 'top left',
+        pointerEvents: 'none',
+        display: 'block',
+        objectFit: 'cover',
+      }}
+    />
+  )
+}
 
 export default function CanvasEngine() {
   const params = useParams()
-  const { camera, setCamera, items, arrows, updateItem, addItem, setItems, deleteItem, bringToFront, sendToBack, deleteArrow, isLinkingMode, setIsLinkingMode, linkingState, setLinkingState, addArrow, selectedId, setSelectedId, setArrows, clearBoard } = useWhiteboardStore()
+  const { camera, setCamera, items, arrows, updateItem, addItem, setItems, deleteItem, bringToFront, sendToBack, deleteArrow, isLinkingMode, setIsLinkingMode, linkingState, setLinkingState, addArrow, selectedId, setSelectedId, setArrows, clearBoard, isReadOnly } = useWhiteboardStore()
   const stageRef = useRef<any>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
-  
+
   const [contextMenu, setContextMenu] = useState<{ id: string, x: number, y: number, isArrow?: boolean } | null>(null)
   const [editingText, setEditingText] = useState<{ id: string, x: number, y: number, content: string, itemType: string } | null>(null)
 
-  // ResizeObserver: measure canvas container
   useEffect(() => {
     if (!containerRef.current) return
     const ro = new ResizeObserver((entries) => {
@@ -26,9 +73,9 @@ export default function CanvasEngine() {
     return () => ro.disconnect()
   }, [])
 
-  // Clipboard image pasting listener
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
+      if (isReadOnly) return
       const clipboardItems = e.clipboardData?.items
       if (!clipboardItems) return
       for (const item of clipboardItems) {
@@ -43,7 +90,7 @@ export default function CanvasEngine() {
             const pointer = stage?.getPointerPosition() || { x: window.innerWidth / 2, y: window.innerHeight / 2 }
             const realX = (pointer.x - cameraState.x) / cameraState.scale
             const realY = (pointer.y - cameraState.y) / cameraState.scale
-            
+
             useWhiteboardStore.getState().addItem({
               id: crypto.randomUUID(),
               itemType: 'asset',
@@ -60,20 +107,34 @@ export default function CanvasEngine() {
       }
     }
     document.addEventListener('paste', handlePaste)
-    return () => document.removeEventListener('paste', handlePaste)
+
+    const saveOnUnload = async () => {
+      const state = useWhiteboardStore.getState()
+      const allItems = state.items
+      if (!allItems.length) return
+      await Promise.all(allItems.map(itm =>
+        fetch(`/api/projects/${params.id}/board/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(itm)
+        })
+      ))
+    }
+    window.addEventListener('beforeunload', saveOnUnload)
+
+    return () => {
+      document.removeEventListener('paste', handlePaste)
+      window.removeEventListener('beforeunload', saveOnUnload)
+    }
   }, [])
 
   const syncedItemIds = useRef<Set<string>>(new Set())
   const syncedArrowIds = useRef<Set<string>>(new Set())
 
-  // Load board data (items + arrows) from DB on mount
   useEffect(() => {
-    console.log('[CanvasEngine] mount, projectId:', params.id)
-    // Critical: clear all local state before loading new project data
     clearBoard()
     syncedItemIds.current.clear()
     syncedArrowIds.current.clear()
-    console.log('[CanvasEngine] store cleared, fetching board...')
 
     fetch(`/api/projects/${params.id}/board`)
       .then(r => r.json())
@@ -92,11 +153,13 @@ export default function CanvasEngine() {
         }
       })
       .catch(console.error)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id])
 
-  // Sync new items securely mapped by Set filters preventing reload thrashing
   useEffect(() => {
+    const state = useWhiteboardStore.getState()
+    if (state.isReadOnly) return
+
     items.forEach(async (item) => {
       if (!syncedItemIds.current.has(item.id)) {
         syncedItemIds.current.add(item.id)
@@ -111,10 +174,13 @@ export default function CanvasEngine() {
         }
       }
     })
-  }, [items])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, params.id])
 
-  // Sync new arrows
   useEffect(() => {
+    const state = useWhiteboardStore.getState()
+    if (state.isReadOnly) return
+
     arrows.forEach(async (arrow) => {
       if (!syncedArrowIds.current.has(arrow.id)) {
         syncedArrowIds.current.add(arrow.id)
@@ -129,9 +195,8 @@ export default function CanvasEngine() {
         }
       }
     })
-  }, [arrows])
+  }, [arrows, params.id])
 
-  // Delete arrow from DB
   const handleDeleteArrow = async (id: string) => {
     deleteArrow(id)
     try {
@@ -141,26 +206,31 @@ export default function CanvasEngine() {
     }
   }
 
-  // Persist item changes (position, size) to DB immediately
-  const handleItemChange = (id: string, updates: Partial<any>) => {
+  const handleDeleteItem = async (id: string) => {
+    deleteItem(id)
+    try {
+      await fetch(`/api/projects/${params.id}/board/items/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      console.error('Failed to delete item from DB', e)
+    }
+  }
+
+  const handleItemChange = async (id: string, updates: Partial<any>) => {
     updateItem(id, updates)
-    fetch(`/api/projects/${params.id}/board/items/${id}`, {
+    await fetch(`/api/projects/${params.id}/board/items/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates)
     }).catch(e => console.error('Failed to persist item change', e))
   }
 
-  // Esc exits linking mode
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isLinkingMode) setIsLinkingMode(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isLinkingMode])
-
-
+  }, [isLinkingMode, setIsLinkingMode])
 
   const handleWheel = (e: any) => {
     e.evt.preventDefault()
@@ -186,7 +256,7 @@ export default function CanvasEngine() {
   }
 
   const handleDoubleClick = (e: any, item: WhiteboardItem) => {
-    if (isLinkingMode) return
+    if (isLinkingMode || isReadOnly) return
     const stage = stageRef.current
     if (!stage) return
     const screenX = item.x * camera.scale + camera.x
@@ -207,9 +277,7 @@ export default function CanvasEngine() {
   }
 
   const handleStageMouseUp = (e: any) => {
-    if (linkingState) {
-      setLinkingState(null) // Drag dropped onto empty space cancels link segment
-    }
+    if (linkingState) setLinkingState(null)
   }
 
   const handleItemMouseDown = (e: any, id: string) => {
@@ -218,7 +286,7 @@ export default function CanvasEngine() {
       const item = items.find(i => i.id === id)
       if (item) {
         let w = 240, h = 240
-        if (item.itemType === 'asset') { w = item.width || 300; h = item.height || 200 }
+        if (item.itemType === 'asset' || item.itemType === 'video') { w = item.width || 300; h = item.height || 200 }
         if (item.itemType === 'text') { w = 150; h = 30 }
         setLinkingState({ fromId: id, toX: item.x + w/2, toY: item.y + h/2 })
       }
@@ -237,125 +305,138 @@ export default function CanvasEngine() {
   }
 
   const handleItemClick = (e: any, id: string) => {
-    if (!isLinkingMode) {
-      setSelectedId(id)
-    }
+    if (!isLinkingMode) setSelectedId(id)
   }
 
   const closeTextEditor = (newContent: string) => {
-    if (editingText) updateItem(editingText.id, { content: newContent })
+    if (editingText) {
+      updateItem(editingText.id, { content: newContent })
+      handleItemChange(editingText.id, { content: newContent })
+    }
     setEditingText(null)
   }
 
   return (
-    <div ref={containerRef} className={`w-full h-full bg-white overflow-hidden relative ${isLinkingMode ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`} 
+    <div ref={containerRef} className={`w-full h-full bg-white overflow-hidden relative ${isReadOnly ? 'cursor-not-allowed' : isLinkingMode ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
          style={{ backgroundImage: 'radial-gradient(#e5e5e5 1px, transparent 1px)', backgroundSize: `${24 * camera.scale}px ${24 * camera.scale}px`, backgroundPosition: `${camera.x}px ${camera.y}px` }}>
-      
+
+      {/* Konva Stage */}
       {size.width > 0 && (
         <Stage
-          ref={stageRef}
-          width={size.width}
-          height={size.height}
-          draggable={!isLinkingMode}
-          scaleX={camera.scale}
-          scaleY={camera.scale}
-          x={camera.x}
-          y={camera.y}
-          onWheel={handleWheel}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleStageMouseUp}
+          ref={stageRef} width={size.width} height={size.height}
+          draggable={!isReadOnly && !isLinkingMode} scaleX={camera.scale} scaleY={camera.scale}
+          x={camera.x} y={camera.y}
+          onWheel={handleWheel} onMouseMove={handleMouseMove} onMouseUp={handleStageMouseUp}
           onDragEnd={(e) => {
             if (e.target === stageRef.current) setCamera({ ...camera, x: e.target.x(), y: e.target.y() })
           }}
-          onClick={(e) => { 
-            if (e.target === stageRef.current) {
-              setSelectedId(null)
-            }
+          onClick={(e) => {
+            if (e.target === stageRef.current) setSelectedId(null)
             setContextMenu(null)
-            if (editingText) closeTextEditor(editingText.content) 
+            if (editingText) closeTextEditor(editingText.content)
           }}
         >
+          {/* 静态渲染层：连线、图片、便签、视频替身 */}
           <Layer>
             {arrows.map(arrow => <ArrowItem key={arrow.id} arrow={arrow} items={items} onContextMenu={handleContextMenu} />)}
-            
+
             {linkingState && (
-               <Arrow
-                 points={[
-                   (() => {
-                     const it = items.find(i => i.id === linkingState.fromId)
-                     if (!it) return 0
-                     let tw = 240, th = 240
-                     if (it.itemType === 'asset') { tw = it.width || 300; th = it.height || 200 }
-                     if (it.itemType === 'text') { tw = 150; th = 30 }
-                     return it.x + tw/2
-                   })(),
-                   (() => {
-                     const it = items.find(i => i.id === linkingState.fromId)
-                     if (!it) return 0
-                     let tw = 240, th = 240
-                     if (it.itemType === 'asset') { tw = it.width || 300; th = it.height || 200 }
-                     if (it.itemType === 'text') { tw = 150; th = 30 }
-                     return it.y + th/2
-                   })(),
-                   linkingState.toX, linkingState.toY
-                 ]}
-                 stroke="#f97316" fill="#f97316" strokeWidth={5} dash={[10, 5]} pointerLength={16} pointerWidth={16}
-                 listening={false}
-               />
+              <Arrow
+                points={[
+                  (() => {
+                    const it = items.find(i => i.id === linkingState.fromId)
+                    if (!it) return 0
+                    let tw = 240, th = 240
+                    if (it.itemType === 'asset' || it.itemType === 'video') { tw = it.width || 300; th = it.height || 200 }
+                    if (it.itemType === 'text') { tw = 150; th = 30 }
+                    return it.x + tw/2
+                  })(),
+                  (() => {
+                    const it = items.find(i => i.id === linkingState.fromId)
+                    if (!it) return 0
+                    let tw = 240, th = 240
+                    if (it.itemType === 'asset' || it.itemType === 'video') { tw = it.width || 300; th = it.height || 200 }
+                    if (it.itemType === 'text') { tw = 150; th = 30 }
+                    return it.y + th/2
+                  })(),
+                  linkingState.toX, linkingState.toY
+                ]}
+                stroke="#f97316" fill="#f97316" strokeWidth={5} dash={[10, 5]} pointerLength={16} pointerWidth={16}
+                listening={false}
+              />
             )}
 
             {items.sort((a,b) => a.zIndex - b.zIndex).map(item => {
-              if (item.itemType === 'asset') return <AssetItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onChange={handleItemChange} />
-              if (item.itemType === 'text') return <TextItem key={item.id} item={item} isLinkingMode={isLinkingMode} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} onChange={handleItemChange} />
-              if (item.itemType === 'note') return <NoteItem key={item.id} item={item} isLinkingMode={isLinkingMode} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} onChange={handleItemChange} />
+              if (item.itemType === 'asset') return <AssetItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} isReadOnly={isReadOnly} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onChange={handleItemChange} />
+              if (item.itemType === 'text') return <TextItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} isReadOnly={isReadOnly} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} onChange={handleItemChange} />
+              if (item.itemType === 'note') return <NoteItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} isReadOnly={isReadOnly} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} onChange={handleItemChange} />
+              if (item.itemType === 'video') return <VideoProxyItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} isReadOnly={isReadOnly} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onChange={handleItemChange} />
               return null
             })}
           </Layer>
         </Stage>
       )}
 
-      {/* HTML Overlays */}
+      {/* ============================================================
+          第二步：HtmlVideoOverlay — DOM 视频渲染层（脱离 Konva 管线）
+          坐标严格跟随 camera 和 item 位置，pointer-events: none 穿透鼠标
+          ============================================================ */}
+      <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-50">
+        {items.filter(i => i.itemType === 'video').map(item => (
+          <HtmlVideoItem key={item.id} item={item} camera={camera} />
+        ))}
+      </div>
+
+      {/* 右键菜单 */}
       {contextMenu && (
         <div className="absolute bg-white border border-zinc-200 rounded-lg shadow-xl py-1 z-50 min-w-32 flex flex-col" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          {!contextMenu.isArrow && (
+          {!contextMenu.isArrow && !isReadOnly && (
             <>
               <button className="text-left px-4 py-2 hover:bg-zinc-50 text-zinc-700 text-sm" onClick={() => { bringToFront(contextMenu.id); setContextMenu(null) }}>置顶一层</button>
               <button className="text-left px-4 py-2 hover:bg-zinc-50 text-zinc-700 text-sm" onClick={() => { sendToBack(contextMenu.id); setContextMenu(null) }}>置底一层</button>
-              
-              {items.find(i => i.id === contextMenu.id)?.itemType === 'asset' && (
+            </>
+          )}
+
+          {!contextMenu.isArrow && (
+            <>
+              {['asset', 'video'].includes(items.find(i => i.id === contextMenu.id)?.itemType || '') && (
                 <button className="text-left px-4 py-2 hover:bg-zinc-50 text-emerald-600 font-medium text-sm" onClick={async () => {
                   setContextMenu(null)
                   const item = items.find(i => i.id === contextMenu.id)
                   if (item && item.content) {
                     try {
-                      const res = await fetch(item.content)
+                      const targetUrl = item.content
+                      const res = await fetch(targetUrl)
                       const blob = await res.blob()
                       const blobUrl = URL.createObjectURL(blob)
                       const a = document.createElement('a')
                       a.href = blobUrl
-                      a.download = `asset-${item.id}.png`
+                      a.download = `大葱画板导出_${item.id.slice(0,6)}.${item.itemType === 'video' ? 'mp4' : 'png'}`
                       a.click()
                       URL.revokeObjectURL(blobUrl)
-                    } catch (e) {
+                    } catch {
                       window.open(item.content, '_blank')
                     }
                   }
-                }}>下载图片</button>
+                }}>下载素材</button>
               )}
-              
-              <div className="h-px bg-zinc-100 my-1"></div>
             </>
           )}
-          <button className="text-left px-4 py-2 hover:bg-red-50 text-red-600 text-sm" onClick={() => { contextMenu.isArrow ? handleDeleteArrow(contextMenu.id) : deleteItem(contextMenu.id); setContextMenu(null) }}>删除</button>
+
+          {!contextMenu.isArrow && !isReadOnly && <div className="h-px bg-zinc-100 my-1"></div>}
+          {!isReadOnly && (
+            <button className="text-left px-4 py-2 hover:bg-red-50 text-red-600 text-sm" onClick={() => { contextMenu.isArrow ? handleDeleteArrow(contextMenu.id) : handleDeleteItem(contextMenu.id); setContextMenu(null) }}>删除</button>
+          )}
         </div>
       )}
 
+      {/* 便签/文本编辑器 */}
       {editingText && (
         <textarea
           autoFocus
           className="absolute z-50 bg-white/95 text-zinc-900 font-sans p-2 rounded shadow-2xl border-2 border-emerald-500 focus:outline-none focus:ring-4 focus:ring-emerald-500/30"
-          style={{ 
-            left: editingText.x, top: editingText.y, 
+          style={{
+            left: editingText.x, top: editingText.y,
             transform: `scale(${camera.scale})`, transformOrigin: 'top left',
             minWidth: editingText.itemType === 'note' ? 200 : 150, minHeight: editingText.itemType === 'note' ? 180 : 40,
             fontSize: editingText.itemType === 'note' ? 16 : 24

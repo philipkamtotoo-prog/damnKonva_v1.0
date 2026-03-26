@@ -13,19 +13,29 @@ export async function PUT(req: Request, { params }: { params: { id: string, item
   try {
     const { id: projectId, itemId } = await params
     const body = await req.json()
-    const updated = await prisma.whiteboardItem.update({
-      where: { id: itemId, projectId },
-      data: {
-        ...(body.x !== undefined && { x: body.x }),
-        ...(body.y !== undefined && { y: body.y }),
-        ...(body.width !== undefined && { width: body.width }),
-        ...(body.height !== undefined && { height: body.height }),
-        ...(body.zIndex !== undefined && { zIndex: body.zIndex }),
-        ...(body.content !== undefined && { content: body.content }),
-      }
-    })
+
+    let updated: any
+    try {
+      updated = await prisma.whiteboardItem.update({
+        where: { id: itemId, projectId },
+        data: {
+          ...(body.x !== undefined && { x: body.x }),
+          ...(body.y !== undefined && { y: body.y }),
+          ...(body.width !== undefined && { width: body.width }),
+          ...(body.height !== undefined && { height: body.height }),
+          ...(body.zIndex !== undefined && { zIndex: body.zIndex }),
+          ...(body.content !== undefined && { content: body.content }),
+        },
+      })
+    } catch (err: any) {
+      // RecordNotFound 说明元素尚未入库，忽略即可，不崩
+      if (err.code === 'RecordNotFound') return NextResponse.json({ ignored: true })
+      throw err
+    }
     return NextResponse.json(updated)
   } catch (err: any) {
+    // 仅忽略 RecordNotFound，其余错误仍上报
+    if (err.code === 'RecordNotFound') return NextResponse.json({ ignored: true })
     console.error('Item PUT error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
