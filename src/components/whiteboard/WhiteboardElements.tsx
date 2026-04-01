@@ -186,6 +186,8 @@ export const VideoProxyItem = ({ item, isSelected, isLinkingMode, isReadOnly, on
       <Group
         ref={shapeRef}
         x={item.x} y={item.y}
+        width={dispW}
+        height={dispH}
         draggable={!isLinkingMode && !isReadOnly}
         onClick={onSelect}
         onDblClick={handleDblClick}
