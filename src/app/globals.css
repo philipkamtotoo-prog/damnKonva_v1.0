@@ -5,6 +5,11 @@
   --foreground: #171717;
 }
 
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

@@ -22,6 +22,11 @@ export type ArrowLink = {
   toItemId: string
 }
 
+interface HistoryEntry {
+  items:  WhiteboardItem[]
+  arrows: ArrowLink[]
+}
+
 interface WhiteboardState {
   items: WhiteboardItem[]
   arrows: ArrowLink[]
@@ -48,6 +53,12 @@ interface WhiteboardState {
   isReadOnly: boolean
   lockOwner: string | null
   setReadOnly: (readOnly: boolean, lockOwner?: string | null) => void
+  // Undo/Redo
+  history:      HistoryEntry[]
+  historyIndex: number
+  pushHistory:  () => void
+  undo:         () => void
+  redo:         () => void
 }
 
 export const useWhiteboardStore = create<WhiteboardState>((set) => ({
@@ -91,4 +102,33 @@ export const useWhiteboardStore = create<WhiteboardState>((set) => ({
   isReadOnly: false,
   lockOwner: null,
   setReadOnly: (readOnly, lockOwner = null) => set({ isReadOnly: readOnly, lockOwner }),
+  // Undo/Redo
+  history: [],
+  historyIndex: -1,
+  pushHistory: () => set((state) => {
+    const entry: HistoryEntry = { items: [...state.items], arrows: [...state.arrows] };
+    const newHistory = state.history.slice(0, state.historyIndex + 1);
+    newHistory.push(entry);
+    // Keep max 50 entries
+    if (newHistory.length > 50) newHistory.shift();
+    return { history: newHistory, historyIndex: newHistory.length - 1 };
+  }),
+  undo: () => set((state) => {
+    if (state.historyIndex < 0) return state;
+    const entry = state.history[state.historyIndex];
+    return {
+      items: [...entry.items],
+      arrows: [...entry.arrows],
+      historyIndex: state.historyIndex - 1,
+    };
+  }),
+  redo: () => set((state) => {
+    if (state.historyIndex >= state.history.length - 1) return state;
+    const entry = state.history[state.historyIndex + 1];
+    return {
+      items: [...entry.items],
+      arrows: [...entry.arrows],
+      historyIndex: state.historyIndex + 1,
+    };
+  }),
 }))

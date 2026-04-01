@@ -50,7 +50,7 @@ export const AssetItem = ({ item, isSelected, onSelect, onMouseDown, onMouseUp, 
         onMouseUp={onMouseUp}
         onContextMenu={(e: any) => { e.evt.preventDefault(); onContextMenu(e, item.id) }}
         onDragEnd={(e: any) => onChange(item.id, { x: e.target.x(), y: e.target.y() })}
-        onTransformEnd={(e: any) => {
+        onTransformEnd={() => {
           const node = shapeRef.current
           const scaleX = node.scaleX()
           const scaleY = node.scaleY()
@@ -68,7 +68,10 @@ export const AssetItem = ({ item, isSelected, onSelect, onMouseDown, onMouseUp, 
         {img ? (
           <KonvaImage image={img} width={item.width || 300} height={item.height || 200} />
         ) : (
-          <Text x={10} y={10} text="Loading..." fill="#71717a" fontSize={12} />
+          <Group>
+            <Rect width={item.width || 300} height={item.height || 200} fill="#f4f4f5" />
+            <Text x={(item.width || 300) / 2 - 28} y={(item.height || 200) / 2 - 8} text="加载中..." fill="#a1a1aa" fontSize={12} />
+          </Group>
         )}
       </Group>
       {isSelected && !isReadOnly && (
@@ -157,37 +160,66 @@ export const ArrowItem = ({ arrow, items, onContextMenu }: any) => {
 // 第一步：VideoProxyItem — Konva 替身，只负责交互，渲染交给 HtmlVideoOverlay
 // ============================================================
 export const VideoProxyItem = ({ item, isSelected, isLinkingMode, isReadOnly, onSelect, onMouseDown, onMouseUp, onContextMenu, onChange }: any) => {
+  const shapeRef = useRef<any>(null)
+  const trRef = useRef<any>(null)
+
+  useEffect(() => {
+    if (isSelected && trRef.current && shapeRef.current) {
+      trRef.current.nodes([shapeRef.current])
+      trRef.current.getLayer().batchDraw()
+    }
+  }, [isSelected])
 
   const handleDblClick = () => {
-    // 通过全局自定义事件触发播放/暂停，由 HtmlVideoOverlay 监听处理
     window.dispatchEvent(new CustomEvent('whiteboard:video:toggle', { detail: { id: item.id } }))
   }
 
   return (
-    <Group
-      x={item.x} y={item.y}
-      draggable={!isLinkingMode && !isReadOnly}
-      onClick={onSelect}
-      onDblClick={handleDblClick}
-      onMouseDown={onMouseDown}
-      onMouseUp={onMouseUp}
-      onContextMenu={(e: any) => { e.evt.preventDefault(); onContextMenu(e, item.id) }}
-      onDragEnd={(e: any) => onChange(item.id, { x: e.target.x(), y: e.target.y() })}
-    >
-      {/* 占位背景：带透明度的灰色矩形 */}
-      <Rect
-        width={item.width || 300}
-        height={item.height || 200}
-        fill="rgba(0,0,0,0.05)"
-        stroke={isSelected && !isReadOnly ? '#10b981' : undefined}
-        strokeWidth={isSelected && !isReadOnly ? 4 : 0}
-        cornerRadius={4}
-      />
-      {/* 封面图标 */}
-      <Group x={(item.width || 300) / 2 - 16} y={(item.height || 200) / 2 - 16} listening={false}>
-        <Circle radius={20} fill="rgba(0,0,0,0.5)" />
-        <Line points={[-8, -11, 11, 0, -8, 11]} fill="white" closed />
+    <>
+      <Group
+        ref={shapeRef}
+        x={item.x} y={item.y}
+        draggable={!isLinkingMode && !isReadOnly}
+        onClick={onSelect}
+        onDblClick={handleDblClick}
+        onMouseDown={onMouseDown}
+        onMouseUp={onMouseUp}
+        onContextMenu={(e: any) => { e.evt.preventDefault(); onContextMenu(e, item.id) }}
+        onDragEnd={(e: any) => onChange(item.id, { x: e.target.x(), y: e.target.y() })}
+        onTransformEnd={() => {
+          const node = shapeRef.current
+          const scaleX = node.scaleX()
+          const scaleY = node.scaleY()
+          node.scaleX(1); node.scaleY(1)
+          onChange(item.id, {
+            x: node.x(), y: node.y(),
+            width:  Math.max(100, node.width()  * scaleX),
+            height: Math.max(60,  node.height() * scaleY)
+          })
+        }}
+      >
+        <Rect
+          width={item.width || 400}
+          height={item.height || 225}
+          fill="rgba(0,0,0,0.05)"
+          stroke={isSelected && !isReadOnly ? '#10b981' : undefined}
+          strokeWidth={isSelected && !isReadOnly ? 4 : 0}
+          cornerRadius={4}
+        />
+        <Group x={(item.width || 400) / 2 - 16} y={(item.height || 225) / 2 - 16} listening={false}>
+          <Circle radius={20} fill="rgba(0,0,0,0.5)" />
+          <Line points={[-8, -11, 11, 0, -8, 11]} fill="white" closed />
+        </Group>
       </Group>
-    </Group>
+      {isSelected && !isReadOnly && (
+        <Transformer
+          ref={trRef}
+          boundBoxFunc={(oldBox, newBox) => {
+            if (newBox.width < 100 || newBox.height < 60) return oldBox
+            return newBox
+          }}
+        />
+      )}
+    </>
   )
 }

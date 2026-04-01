@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { cookies } from 'next/headers'
 import { verifyToken } from '@/lib/auth'
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies()
   const token = cookieStore.get('auth_token')?.value
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -18,7 +18,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies()
   const token = cookieStore.get('auth_token')?.value
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

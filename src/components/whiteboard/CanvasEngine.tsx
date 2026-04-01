@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Stage, Layer, Arrow } from 'react-konva'
-import { useWhiteboardStore, WhiteboardItem } from '@/store/whiteboard'
+import { useWhiteboardStore, WhiteboardItem, ArrowLink } from '@/store/whiteboard'
 import { AssetItem, TextItem, NoteItem, ArrowItem, VideoProxyItem } from './WhiteboardElements'
 
 // ============================================================
@@ -56,7 +56,7 @@ function HtmlVideoItem({ item, camera }: { item: WhiteboardItem; camera: { x: nu
 
 export default function CanvasEngine() {
   const params = useParams()
-  const { camera, setCamera, items, arrows, updateItem, addItem, setItems, deleteItem, bringToFront, sendToBack, deleteArrow, isLinkingMode, setIsLinkingMode, linkingState, setLinkingState, addArrow, selectedId, setSelectedId, setArrows, clearBoard, isReadOnly, lastAssetUpdate } = useWhiteboardStore()
+  const { camera, setCamera, items, arrows, updateItem, setItems, deleteItem, bringToFront, sendToBack, deleteArrow, isLinkingMode, setIsLinkingMode, linkingState, setLinkingState, addArrow, selectedId, setSelectedId, setArrows, clearBoard, isReadOnly, lastAssetUpdate, pushHistory } = useWhiteboardStore()
   const stageRef = useRef<any>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -112,7 +112,7 @@ export default function CanvasEngine() {
       const state = useWhiteboardStore.getState()
       const allItems = state.items
       if (!allItems.length) return
-      await Promise.all(allItems.map(itm =>
+      await Promise.all(allItems.map((itm: WhiteboardItem) =>
         fetch(`/api/projects/${params.id}/board/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -169,7 +169,7 @@ export default function CanvasEngine() {
         const currentItems = useWhiteboardStore.getState().items
         // 合并：保留本地有但服务器没有的 items（新生成的），其余用服务器数据
         const merged = [
-          ...currentItems.filter((ci) => !serverIds.has(ci.id)),
+          ...currentItems.filter((ci: WhiteboardItem) => !serverIds.has(ci.id)),
           ...data.items,
         ]
         setItems(merged)
@@ -183,7 +183,7 @@ export default function CanvasEngine() {
     const state = useWhiteboardStore.getState()
     if (state.isReadOnly) return
 
-    items.forEach(async (item) => {
+    items.forEach(async (item: WhiteboardItem) => {
       if (!syncedItemIds.current.has(item.id)) {
         syncedItemIds.current.add(item.id)
         try {
@@ -204,7 +204,7 @@ export default function CanvasEngine() {
     const state = useWhiteboardStore.getState()
     if (state.isReadOnly) return
 
-    arrows.forEach(async (arrow) => {
+    arrows.forEach(async (arrow: ArrowLink) => {
       if (!syncedArrowIds.current.has(arrow.id)) {
         syncedArrowIds.current.add(arrow.id)
         try {
@@ -221,6 +221,7 @@ export default function CanvasEngine() {
   }, [arrows, params.id])
 
   const handleDeleteArrow = async (id: string) => {
+    pushHistory()
     deleteArrow(id)
     try {
       await fetch(`/api/projects/${params.id}/board/arrows?arrowId=${id}`, { method: 'DELETE' })
@@ -230,6 +231,7 @@ export default function CanvasEngine() {
   }
 
   const handleDeleteItem = async (id: string) => {
+    pushHistory()
     deleteItem(id)
     try {
       await fetch(`/api/projects/${params.id}/board/items/${id}`, { method: 'DELETE' })
@@ -239,6 +241,7 @@ export default function CanvasEngine() {
   }
 
   const handleItemChange = async (id: string, updates: Partial<any>) => {
+    pushHistory()
     updateItem(id, updates)
     await fetch(`/api/projects/${params.id}/board/items/${id}`, {
       method: 'PUT',
@@ -272,13 +275,14 @@ export default function CanvasEngine() {
   }
 
   const handleContextMenu = (e: any, id: string, isArrow = false) => {
+    e.evt?.preventDefault()
     const stage = stageRef.current
     if (!stage) return
     const pointer = stage.getPointerPosition()
     if (pointer) setContextMenu({ id, x: pointer.x, y: pointer.y, isArrow })
   }
 
-  const handleDoubleClick = (e: any, item: WhiteboardItem) => {
+  const handleDoubleClick = (_e: any, item: WhiteboardItem) => {
     if (isLinkingMode || isReadOnly) return
     const stage = stageRef.current
     if (!stage) return
@@ -288,7 +292,7 @@ export default function CanvasEngine() {
     setContextMenu(null)
   }
 
-  const handleMouseMove = (e: any) => {
+  const handleMouseMove = (_e: any) => {
     if (linkingState) {
       const stage = stageRef.current
       const pointer = stage.getPointerPosition()
@@ -299,14 +303,13 @@ export default function CanvasEngine() {
     }
   }
 
-  const handleStageMouseUp = (e: any) => {
+  const handleStageMouseUp = (_e: any) => {
     if (linkingState) setLinkingState(null)
   }
 
-  const handleItemMouseDown = (e: any, id: string) => {
+  const handleItemMouseDown = (_e: any, id: string) => {
     if (isLinkingMode) {
-      e.cancelBubble = true
-      const item = items.find(i => i.id === id)
+      const item = items.find((i: WhiteboardItem) => i.id === id)
       if (item) {
         let w = 240, h = 240
         if (item.itemType === 'asset' || item.itemType === 'video') { w = item.width || 300; h = item.height || 200 }
@@ -316,10 +319,10 @@ export default function CanvasEngine() {
     }
   }
 
-  const handleItemMouseUp = (e: any, id: string) => {
+  const handleItemMouseUp = (_e: any, id: string) => {
     if (linkingState) {
-      e.cancelBubble = true
       if (linkingState.fromId !== id) {
+        pushHistory()
         addArrow({ id: crypto.randomUUID(), fromItemId: linkingState.fromId, toItemId: id })
       }
       setLinkingState(null)
@@ -327,12 +330,13 @@ export default function CanvasEngine() {
     }
   }
 
-  const handleItemClick = (e: any, id: string) => {
+  const handleItemClick = (_e: any, id: string) => {
     if (!isLinkingMode) setSelectedId(id)
   }
 
-  const closeTextEditor = (newContent: string) => {
+  const closeTextEditor = (newContent: string, originalContent: string) => {
     if (editingText) {
+      if (newContent !== originalContent) pushHistory()
       updateItem(editingText.id, { content: newContent })
       handleItemChange(editingText.id, { content: newContent })
     }
@@ -356,18 +360,18 @@ export default function CanvasEngine() {
           onClick={(e) => {
             if (e.target === stageRef.current) setSelectedId(null)
             setContextMenu(null)
-            if (editingText) closeTextEditor(editingText.content)
+            if (editingText) closeTextEditor(editingText.content, editingText.content)
           }}
         >
           {/* 静态渲染层：连线、图片、便签、视频替身 */}
           <Layer>
-            {arrows.map(arrow => <ArrowItem key={arrow.id} arrow={arrow} items={items} onContextMenu={handleContextMenu} />)}
+            {arrows.map((arrow: ArrowLink) => <ArrowItem key={arrow.id} arrow={arrow} items={items} onContextMenu={handleContextMenu} />)}
 
             {linkingState && (
               <Arrow
                 points={[
                   (() => {
-                    const it = items.find(i => i.id === linkingState.fromId)
+                    const it = items.find((i: WhiteboardItem) => i.id === linkingState.fromId)
                     if (!it) return 0
                     let tw = 240, th = 240
                     if (it.itemType === 'asset' || it.itemType === 'video') { tw = it.width || 300; th = it.height || 200 }
@@ -375,11 +379,11 @@ export default function CanvasEngine() {
                     return it.x + tw/2
                   })(),
                   (() => {
-                    const it = items.find(i => i.id === linkingState.fromId)
+                    const it = items.find((i: WhiteboardItem) => i.id === linkingState.fromId)
                     if (!it) return 0
-                    let tw = 240, th = 240
-                    if (it.itemType === 'asset' || it.itemType === 'video') { tw = it.width || 300; th = it.height || 200 }
-                    if (it.itemType === 'text') { tw = 150; th = 30 }
+                    let th = 240
+                    if (it.itemType === 'asset' || it.itemType === 'video') { th = it.height || 200 }
+                    if (it.itemType === 'text') { th = 30 }
                     return it.y + th/2
                   })(),
                   linkingState.toX, linkingState.toY
@@ -389,7 +393,7 @@ export default function CanvasEngine() {
               />
             )}
 
-            {items.sort((a,b) => a.zIndex - b.zIndex).map(item => {
+            {(items as WhiteboardItem[]).sort((a, b) => a.zIndex - b.zIndex).map((item) => {
               if (item.itemType === 'asset') return <AssetItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} isReadOnly={isReadOnly} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onChange={handleItemChange} />
               if (item.itemType === 'text') return <TextItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} isReadOnly={isReadOnly} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} onChange={handleItemChange} />
               if (item.itemType === 'note') return <NoteItem key={item.id} item={item} isSelected={selectedId === item.id} isLinkingMode={isLinkingMode} isReadOnly={isReadOnly} onSelect={(e: any) => handleItemClick(e, item.id)} onMouseDown={(e:any)=>handleItemMouseDown(e, item.id)} onMouseUp={(e:any)=>handleItemMouseUp(e, item.id)} onContextMenu={handleContextMenu} onDoubleClick={handleDoubleClick} onChange={handleItemChange} />
@@ -405,27 +409,34 @@ export default function CanvasEngine() {
           坐标严格跟随 camera 和 item 位置，pointer-events: none 穿透鼠标
           ============================================================ */}
       <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-50">
-        {items.filter(i => i.itemType === 'video').map(item => (
+        {(items as WhiteboardItem[]).filter((i: WhiteboardItem) => i.itemType === 'video').map(item => (
           <HtmlVideoItem key={item.id} item={item} camera={camera} />
         ))}
       </div>
 
       {/* 右键菜单 */}
       {contextMenu && (
-        <div className="absolute bg-white border border-zinc-200 rounded-lg shadow-xl py-1 z-50 min-w-32 flex flex-col" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <div
+          className="absolute bg-white border border-zinc-200 rounded-lg shadow-xl py-1 z-50 min-w-32 flex flex-col"
+          style={{
+            left: Math.min(contextMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 160),
+            top:  Math.min(contextMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 300),
+            animation: 'scaleIn 0.15s ease-out',
+          }}
+        >
           {!contextMenu.isArrow && !isReadOnly && (
             <>
-              <button className="text-left px-4 py-2 hover:bg-zinc-50 text-zinc-700 text-sm" onClick={() => { bringToFront(contextMenu.id); setContextMenu(null) }}>置顶一层</button>
-              <button className="text-left px-4 py-2 hover:bg-zinc-50 text-zinc-700 text-sm" onClick={() => { sendToBack(contextMenu.id); setContextMenu(null) }}>置底一层</button>
+              <button className="text-left px-4 py-2 hover:bg-zinc-50 text-zinc-700 text-sm" onClick={() => { pushHistory(); bringToFront(contextMenu.id); setContextMenu(null) }}>置顶一层</button>
+              <button className="text-left px-4 py-2 hover:bg-zinc-50 text-zinc-700 text-sm" onClick={() => { pushHistory(); sendToBack(contextMenu.id); setContextMenu(null) }}>置底一层</button>
             </>
           )}
 
           {!contextMenu.isArrow && (
             <>
-              {['asset', 'video'].includes(items.find(i => i.id === contextMenu.id)?.itemType || '') && (
+              {['asset', 'video'].includes(items.find((i: WhiteboardItem) => i.id === contextMenu.id)?.itemType || '') && (
                 <button className="text-left px-4 py-2 hover:bg-zinc-50 text-emerald-600 font-medium text-sm" onClick={async () => {
                   setContextMenu(null)
-                  const item = items.find(i => i.id === contextMenu.id)
+                  const item = items.find((i: WhiteboardItem) => i.id === contextMenu.id)
                   if (item && item.content) {
                     try {
                       const targetUrl = item.content
@@ -466,8 +477,8 @@ export default function CanvasEngine() {
           }}
           value={editingText.content}
           onChange={(e) => setEditingText({ ...editingText, content: e.target.value })}
-          onBlur={(e) => closeTextEditor(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Escape') closeTextEditor(editingText.content) }}
+          onBlur={(e) => closeTextEditor(e.target.value, editingText.content)}
+          onKeyDown={(e) => { if (e.key === 'Escape') closeTextEditor(editingText.content, editingText.content) }}
         />
       )}
     </div>

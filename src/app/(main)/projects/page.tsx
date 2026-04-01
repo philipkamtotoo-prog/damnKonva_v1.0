@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { useToast } from '@/components/ui/Toast'
 
 type Project = {
   id: string
@@ -13,6 +15,7 @@ type Project = {
 
 export default function ProjectsPage() {
   const router = useRouter()
+  const { error: toastError } = useToast()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -22,23 +25,30 @@ export default function ProjectsPage() {
 
   const [user, setUser] = useState<any>(null)
 
+  // Confirm dialog state
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+
   useEffect(() => {
     fetchProjects()
     fetch('/api/auth/me').then(r => r.json()).then(data => { if (!data.error) setUser(data) })
   }, [])
 
-  const handleDeleteProject = async (e: React.MouseEvent, id: string) => {
+  const handleDeleteProject = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation()
-    if (!confirm('【警告 1/3】确定要删除这个项目吗？这将不可逆！')) return
-    if (!confirm('【警告 2/3】删除项目将连带彻底清除所有关联的白板卡片、连线和生成的素材图片，确定继续？')) return
-    if (!confirm('【最终警告 3/3】最后一次确认：您真的要彻底抹除此项目吗？')) return
-    
+    setDeleteTarget({ id, name })
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
     try {
-      const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' })
-      if (res.ok) fetchProjects()
-      else alert('删除失败')
-    } catch (e) {
-      alert('网络错误')
+      const res = await fetch(`/api/projects/${deleteTarget.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        fetchProjects()
+      } else {
+        toastError('删除失败')
+      }
+    } catch (_e) {
+      toastError('网络错误')
     }
   }
 
@@ -151,7 +161,7 @@ export default function ProjectsPage() {
                 <div className="absolute top-0 left-0 w-1 h-0 bg-emerald-500 transition-all duration-300 group-hover:h-full"></div>
                 
                 {user?.isApiAdmin && (
-                  <button onClick={(e) => handleDeleteProject(e, p.id)} className="absolute top-4 right-4 text-red-500/0 group-hover:text-red-500/70 hover:!text-white hover:!bg-red-500 px-3 py-1 rounded transition-all text-xs z-10 font-bold border border-red-500/0 hover:border-red-500">
+                  <button onClick={(e) => handleDeleteProject(e, p.id, p.name)} className="absolute top-4 right-4 text-red-500/0 group-hover:text-red-500/70 hover:!text-white hover:!bg-red-500 px-3 py-1 rounded transition-all text-xs z-10 font-bold border border-red-500/0 hover:border-red-500">
                     删除
                   </button>
                 )}
@@ -208,6 +218,17 @@ export default function ProjectsPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        title="删除项目"
+        description={`确定要删除项目「${deleteTarget?.name}」吗？此操作不可逆，所有白板卡片、连线和素材将被永久清除。`}
+        confirmText="确认删除"
+        cancelText="取消"
+        danger
+      />
     </div>
   )
 }

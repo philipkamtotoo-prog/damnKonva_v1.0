@@ -1,12 +1,14 @@
 'use client'
 
 import React, { useState, useMemo } from 'react';
-import { useWhiteboardStore } from '@/store/whiteboard';
+import { useWhiteboardStore, WhiteboardItem } from '@/store/whiteboard';
 import { useParams } from 'next/navigation';
+import { useToast } from '@/components/ui/Toast';
 
 export default function GeneratePanel() {
   const params = useParams();
   const projectId = params.id as string;
+  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const [mode, setMode] = useState<'image' | 'video'>('image');
   const [isGenerating, setIsGenerating] = useState(false);
   const [progressText, setProgressText] = useState('');
@@ -88,25 +90,25 @@ export default function GeneratePanel() {
 
   const handleLocalUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    if (refImages.length + files.length > 10) return alert('最多支持 10 张参考图！');
+    if (refImages.length + files.length > 10) return toastError('最多支持 10 张参考图！');
     for (const file of files) {
       try {
         const base64 = await fileToBase64(file)
         setRefImages(prev => [...prev, { id: crypto.randomUUID(), url: base64, source: 'local', frameType: 'ref' }]);
       } catch {
-        alert(`图片 ${file.name} 压缩失败，已跳过`);
+        toastError(`图片 ${file.name} 压缩失败，已跳过`);
       }
     }
   };
 
   const handlePickFromBoard = () => {
-    if (!selectedId) return alert('请先在左侧画板点击选中一张图片！');
-    const selectedItem = items.find(i => i.id === selectedId);
+    if (!selectedId) return toastError('请先在左侧画板点击选中一张图片！');
+    const selectedItem = items.find((i: WhiteboardItem) => i.id === selectedId);
     if (selectedItem && selectedItem.itemType === 'asset') {
-      if (refImages.length >= 10) return alert('最多支持 10 张参考图！');
+      if (refImages.length >= 10) return toastError('最多支持 10 张参考图！');
       setRefImages(prev => [...prev, { id: crypto.randomUUID(), url: selectedItem.content!, source: 'board', frameType: 'ref' }]);
     } else {
-      alert('选中的元素不是有效的图片！');
+      toastError('选中的元素不是有效的图片！');
     }
   };
 
@@ -118,7 +120,7 @@ export default function GeneratePanel() {
 
   const handleGenerate = async () => {
     if (isReadOnly) return
-    if (!form.corePrompt) return alert('核心提示词不能为空！');
+    if (!form.corePrompt) return toastError('核心提示词不能为空！');
     setIsGenerating(true);
     setProgressText(`正在提交${mode === 'image' ? '生图' : '视频'}任务...`);
 
@@ -143,7 +145,7 @@ export default function GeneratePanel() {
         const { worldX, worldY } = getScreenCenter();
         const assets = data.assets ?? [];
         if (assets.length === 0) throw new Error('未返回任何素材，请查看后端日志');
-        const baseZ = Math.max(...items.map(i => i.zIndex), 0) + 1;
+        const baseZ = Math.max(...items.map((i: WhiteboardItem) => i.zIndex), 0) + 1;
         assets.forEach((asset: any, index: number) => {
           const url = asset.originalUrl || asset.thumbnailUrl
           if (url) {
@@ -163,6 +165,7 @@ export default function GeneratePanel() {
         })
         triggerAssetUpdate()
         setProgressText('生图成功！资产已入库并加入画板。');
+        toastSuccess('生图成功！资产已入库并加入画板。');
         
       } else {
         // ========== 视频生成流程 ==========
@@ -203,7 +206,7 @@ export default function GeneratePanel() {
           if (pollData.status === 'succeed') {
             const { worldX, worldY } = getScreenCenter();
             const allItems = useWhiteboardStore.getState().items;
-            const topZ = Math.max(...allItems.map(i => i.zIndex), 0) + 1;
+            const topZ = Math.max(...(allItems as WhiteboardItem[]).map((i: WhiteboardItem) => i.zIndex), 0) + 1;
             addItem({
               id: crypto.randomUUID(), itemType: 'video', content: pollData.videoUrl,
               x: worldX - 200, y: worldY - 112.5, width: 400, height: 225, zIndex: topZ
@@ -211,10 +214,11 @@ export default function GeneratePanel() {
             setIsGenerating(false);
             triggerAssetUpdate();
             setProgressText('视频生成成功！资产已入库并加入画板。');
+            toastSuccess('视频生成成功！资产已入库并加入画板。');
           } else if (pollData.status === 'failed') {
             setIsGenerating(false);
             setProgressText('');
-            alert(`视频合成失败: ${pollData.error}`);
+            toastError(`视频合成失败: ${pollData.error}`);
           } else {
             setProgressText(`视频渲染中(${pollCount})，请耐心等待...`);
             if (pollCount < MAX_POLLS) {
@@ -222,7 +226,7 @@ export default function GeneratePanel() {
             } else {
               setIsGenerating(false);
               setProgressText('');
-              alert('视频生成超时，请稍后重试。');
+              toastError('视频生成超时，请稍后重试。');
             }
           }
         }
@@ -230,7 +234,7 @@ export default function GeneratePanel() {
         return; 
       }
     } catch (err: any) {
-      alert(`生成失败: ${err.message}`);
+      toastError(`生成失败: ${err.message}`);
     } finally {
       setIsGenerating(false);
       setTimeout(() => setProgressText(''), 3000);
