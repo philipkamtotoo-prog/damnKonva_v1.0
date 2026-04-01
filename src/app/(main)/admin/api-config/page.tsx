@@ -19,7 +19,7 @@ const MODEL_HINTS: Record<string, string> = {
   volcano_image: 'doubao-seedream-5-0-260128',
   volcano_video: 'doubao-seedance-1-5-pro-251215',
   ksyun_image: 'doubao-seedream-4.5',
-  ksyun_video: 'doubao-seedream-4.5-i2v',
+  ksyun_video: 'kling-v2-6',
 }
 
 function makeEmpty(type: string, provider: string) {

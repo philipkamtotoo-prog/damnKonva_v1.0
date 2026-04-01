@@ -56,7 +56,7 @@ function HtmlVideoItem({ item, camera }: { item: WhiteboardItem; camera: { x: nu
 
 export default function CanvasEngine() {
   const params = useParams()
-  const { camera, setCamera, items, arrows, updateItem, addItem, setItems, deleteItem, bringToFront, sendToBack, deleteArrow, isLinkingMode, setIsLinkingMode, linkingState, setLinkingState, addArrow, selectedId, setSelectedId, setArrows, clearBoard, isReadOnly } = useWhiteboardStore()
+  const { camera, setCamera, items, arrows, updateItem, addItem, setItems, deleteItem, bringToFront, sendToBack, deleteArrow, isLinkingMode, setIsLinkingMode, linkingState, setLinkingState, addArrow, selectedId, setSelectedId, setArrows, clearBoard, isReadOnly, lastAssetUpdate } = useWhiteboardStore()
   const stageRef = useRef<any>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -131,6 +131,7 @@ export default function CanvasEngine() {
   const syncedItemIds = useRef<Set<string>>(new Set())
   const syncedArrowIds = useRef<Set<string>>(new Set())
 
+  // 项目切换时：清空并重新拉取全量数据
   useEffect(() => {
     clearBoard()
     syncedItemIds.current.clear()
@@ -155,6 +156,28 @@ export default function CanvasEngine() {
       .catch(console.error)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id])
+
+  // lastAssetUpdate 变化时（生成新资产后）：从服务器增量合并 items，不覆盖本地未同步的新 items
+  useEffect(() => {
+    if (!params.id) return
+    fetch(`/api/projects/${params.id}/board`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.items || data.items.length === 0) return
+        // 用 Map 按 id 去重：服务器数据优先，本地新加的（id 不在服务器）保留
+        const serverIds = new Set(data.items.map((i: any) => i.id))
+        const currentItems = useWhiteboardStore.getState().items
+        // 合并：保留本地有但服务器没有的 items（新生成的），其余用服务器数据
+        const merged = [
+          ...currentItems.filter((ci) => !serverIds.has(ci.id)),
+          ...data.items,
+        ]
+        setItems(merged)
+        data.items.forEach((i: any) => syncedItemIds.current.add(i.id))
+      })
+      .catch(console.error)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAssetUpdate])
 
   useEffect(() => {
     const state = useWhiteboardStore.getState()

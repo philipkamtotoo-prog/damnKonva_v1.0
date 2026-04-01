@@ -52,5 +52,8 @@ scripts/
 # operation docs (may reference credentials)
 doc/
 
+# uploaded media (permanent local files, not to be committed)
+public/uploads/
+
 # temp / validation output
 validate_out*.txt

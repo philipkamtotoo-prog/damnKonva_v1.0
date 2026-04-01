@@ -25,7 +25,25 @@ export default function GeneratePanel() {
     count: 1
   });
 
-  const { items, selectedId, addItem, triggerAssetUpdate, isReadOnly } = useWhiteboardStore();
+  const { items, selectedId, addItem, triggerAssetUpdate, isReadOnly, camera } = useWhiteboardStore();
+
+  const ASSET_W = 400;
+  const ASSET_H = 400;
+  const GAP = 20;
+  const COLS = 2;
+  const SIDEBAR_LEFT = 256;
+  const PANEL_RIGHT = 384;
+  const HEADER_H = 56;
+  const MAIN_PT = 40; // main 元素的 pt-10 内边距
+
+  function getScreenCenter() {
+    const screenW = window.innerWidth - SIDEBAR_LEFT - PANEL_RIGHT;
+    const screenH = window.innerHeight - HEADER_H - MAIN_PT;
+    return {
+      worldX: -camera.x / camera.scale + (screenW / 2) / camera.scale,
+      worldY: -camera.y / camera.scale + (screenH / 2) / camera.scale,
+    };
+  }
 
   const finalPrompt = useMemo(() => {
     let p = form.corePrompt.trim();
@@ -86,7 +104,7 @@ export default function GeneratePanel() {
     const selectedItem = items.find(i => i.id === selectedId);
     if (selectedItem && selectedItem.itemType === 'asset') {
       if (refImages.length >= 10) return alert('最多支持 10 张参考图！');
-      setRefImages(prev => [...prev, { id: crypto.randomUUID(), url: selectedItem.content, source: 'board', frameType: 'ref' }]);
+      setRefImages(prev => [...prev, { id: crypto.randomUUID(), url: selectedItem.content!, source: 'board', frameType: 'ref' }]);
     } else {
       alert('选中的元素不是有效的图片！');
     }
@@ -122,15 +140,25 @@ export default function GeneratePanel() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         
-        // 返回了 assets 数组，遍历全部加入白板，防止重叠加偏移
-        const assets = data.assets ?? []
+        const { worldX, worldY } = getScreenCenter();
+        const assets = data.assets ?? [];
+        if (assets.length === 0) throw new Error('未返回任何素材，请查看后端日志');
+        const baseZ = Math.max(...items.map(i => i.zIndex), 0) + 1;
         assets.forEach((asset: any, index: number) => {
           const url = asset.originalUrl || asset.thumbnailUrl
           if (url) {
+            const col = index % COLS;
+            const row = Math.floor(index / COLS);
+            const offsetX = col * (ASSET_W + GAP);
+            const offsetY = row * (ASSET_H + GAP);
+            const gridW = Math.min(assets.length, COLS) * (ASSET_W + GAP) - GAP;
+            const gridH = Math.ceil(assets.length / COLS) * (ASSET_H + GAP) - GAP;
+            const finalX = worldX - gridW / 2 + offsetX;
+            const finalY = worldY - gridH / 2 + offsetY;
             addItem({
               id: crypto.randomUUID(), itemType: 'asset', content: url,
-              x: 100 + index * 50, y: 100 + index * 50, width: 400, height: 400, zIndex: 10
-            })
+              x: finalX, y: finalY, width: ASSET_W, height: ASSET_H, zIndex: baseZ + index
+            });
           }
         })
         triggerAssetUpdate()
@@ -168,14 +196,17 @@ export default function GeneratePanel() {
         const MAX_POLLS = 300 // 最多 300 次 × 5s = 25 分钟
         const poll = async () => {
           pollCount++
-          const params = new URLSearchParams({ taskId: taskData.taskId, projectId: String(projectId), prompt: finalPrompt })
+          const params = new URLSearchParams({ taskId: taskData.taskId, projectId: String(projectId), prompt: finalPrompt, multi: taskData.multi || 'false' })
           const pollRes = await fetch(`/api/generate/video/status?${params.toString()}`)
           const pollData = await pollRes.json()
 
           if (pollData.status === 'succeed') {
+            const { worldX, worldY } = getScreenCenter();
+            const allItems = useWhiteboardStore.getState().items;
+            const topZ = Math.max(...allItems.map(i => i.zIndex), 0) + 1;
             addItem({
               id: crypto.randomUUID(), itemType: 'video', content: pollData.videoUrl,
-              x: 100, y: 100, width: 400, height: 225, zIndex: 10
+              x: worldX - 200, y: worldY - 112.5, width: 400, height: 225, zIndex: topZ
             });
             setIsGenerating(false);
             triggerAssetUpdate();
@@ -289,7 +320,7 @@ export default function GeneratePanel() {
 
         <div className="bg-zinc-50 p-2 rounded border border-zinc-200">
           <label className="block text-[10px] text-zinc-400 mb-1">🛠️ 最终组装的正向参数 (预览)</label>
-          <p className="text-xs text-zinc-600 break-words">{finalPrompt || '等待输入...'}</p>
+          <p className="text-xs text-zinc-600 wrap-break-word">{finalPrompt || '等待输入...'}</p>
         </div>
 
         <div className="flex gap-2">

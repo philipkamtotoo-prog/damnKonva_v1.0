@@ -96,7 +96,7 @@ export default function WhiteboardPage() {
   // 核心修复：计算中心点时，必须刨除左侧边栏(256px)和右侧面板(384px)的宽度
   const getCenter = () => {
     const canvasWidth = typeof window !== 'undefined' ? window.innerWidth - 256 - 384 : 800
-    const canvasHeight = typeof window !== 'undefined' ? window.innerHeight - 56 : 600
+    const canvasHeight = typeof window !== 'undefined' ? window.innerHeight - 56 - 40 : 600 // -40 = main pt-10
     const cx = -camera.x / camera.scale + canvasWidth / 2 / camera.scale
     const cy = -camera.y / camera.scale + canvasHeight / 2 / camera.scale
     return { cx, cy }

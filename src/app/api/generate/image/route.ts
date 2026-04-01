@@ -3,6 +3,31 @@ import { prisma } from '@/lib/db'
 import { verifyToken } from '@/lib/auth'
 import { cookies } from 'next/headers'
 import { decrypt } from '@/lib/crypto'
+import { downloadAndSaveAsset } from '@/lib/storage'
+import fs from 'fs'
+import path from 'path'
+
+/** 将本地 /uploads/ 路径转为 Base64 Data URI */
+async function resolveLocalImage(image: string): Promise<string> {
+  if (!image || !image.startsWith('/uploads/')) return image
+  const filePath = path.join(process.cwd(), 'public', image)
+  if (!fs.existsSync(filePath)) {
+    console.warn(`本地垫图文件不存在: ${filePath}`)
+    return image
+  }
+  const buffer = fs.readFileSync(filePath)
+  const ext = path.extname(filePath).toLowerCase()
+  const mimeMap: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+  }
+  const mime = mimeMap[ext] || 'image/png'
+  const base64 = buffer.toString('base64')
+  return `data:${mime};base64,${base64}`
+}
 
 /** 判断是否为 Anthropic/Claude 系列模型 */
 function isAnthropicModel(model: string): boolean {
@@ -17,12 +42,15 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
-    const { projectId, prompt, negativePrompt, size, n, image } = await req.json()
+    const { projectId, prompt, negativePrompt, size, n, image: rawImage } = await req.json()
 
     const config = await prisma.apiConfig.findFirst({ where: { type: 'image', enabled: true } })
     if (!config || !config.baseUrl || !config.apiKeyEncrypted) {
       return NextResponse.json({ error: '系统尚未配置生图 API，请联系管理员在指控中心设置。' }, { status: 400 })
     }
+
+    // 本地垫图文件转为 Base64 Data URI
+    const image = await resolveLocalImage(rawImage || '')
 
     const apiKey = decrypt(config.apiKeyEncrypted)
     if (!apiKey) {
@@ -161,8 +189,6 @@ export async function POST(req: Request) {
         prompt: combinedPrompt,
         size: safeSize,
         response_format: 'url',
-        watermark: false,
-        sequential_image_generation: 'disabled',
         ...(image ? { image } : {}),
       }
 
@@ -219,6 +245,16 @@ export async function POST(req: Request) {
     // ── 入库 ──────────────────────────────────────────────────────────────
     const createdAssets = []
     for (const imageUrl of urls) {
+      let localUrl = imageUrl
+      try {
+        // base64 格式无需下载，直接使用
+        if (!imageUrl.startsWith('data:')) {
+          localUrl = await downloadAndSaveAsset(imageUrl, 'image')
+        }
+      } catch (dlErr) {
+        console.warn('图片下载失败，使用原始 URL:', dlErr)
+      }
+
       const asset = await prisma.asset.create({
         data: {
           projectId,
@@ -227,8 +263,8 @@ export async function POST(req: Request) {
           status: 'success',
           prompt,
           negativePrompt: negativePrompt || null,
-          thumbnailUrl: imageUrl,
-          originalUrl: imageUrl,
+          thumbnailUrl: localUrl,
+          originalUrl: localUrl,
           createdBy: user.userId,
           params: JSON.stringify({ size: sizeStr, model }),
         },

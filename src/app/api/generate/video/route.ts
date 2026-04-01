@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     }
     const rawBaseUrl = config.baseUrl
 
-    // 稳健 URL 清洗：取 origin，丢弃管理员误填的多余路径
+    // 火山引擎只需要 origin，金山云需要完整路径（含模型名）
     let origin: string
     try {
       origin = new URL(rawBaseUrl).origin
@@ -36,10 +36,59 @@ export async function POST(req: Request) {
     }
 
     const model = config.defaultModel
+    const finalPrompt = prompt + (negativePrompt ? ` 必须避免：${negativePrompt}` : '')
+
+    if (config.provider === 'ksyun') {
+      // ── 金山云可灵：rawBaseUrl 已含模型路径（如 /kling-v2-6），直接拼接接口路径 ──
+      const stripData = (url: string) => url.includes(',') ? url.split(',')[1] : url
+
+      if (referenceImages && referenceImages.length >= 2) {
+        const body = {
+          model_name: 'kling-v2-6', // 多图支持 kling-v2-6
+          image_list: referenceImages.slice(0, 4).map((i: any) => ({ image: stripData(i.url) })),
+          prompt: finalPrompt,
+          negative_prompt: negativePrompt || '',
+          duration: '5',
+          mode: 'pro',
+        }
+        const res = await fetch(`${rawBaseUrl}/v1/videos/multi-image2video`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) throw new Error(`金山云(多图)请求失败(${res.status}): ${(await res.text()).substring(0, 300)}`)
+        const d = await res.json()
+        const taskId = d.data?.task_id
+        if (!taskId) throw new Error(`金山云未返回taskId: ${JSON.stringify(d)}`)
+        return NextResponse.json({ success: true, taskId, multi: true })
+      } else if (referenceImages && referenceImages.length === 1) {
+        const body = {
+          model_name: 'kling-v2-6', // 单图支持 kling-v2-6
+          image: stripData(referenceImages[0].url),
+          prompt: finalPrompt,
+          negative_prompt: negativePrompt || '',
+          duration: '5',
+          mode: 'pro',
+        }
+        const res = await fetch(`${rawBaseUrl}/v1/videos/image2video`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) throw new Error(`金山云(单图)请求失败(${res.status}): ${(await res.text()).substring(0, 300)}`)
+        const d = await res.json()
+        const taskId = d.data?.task_id
+        if (!taskId) throw new Error(`金山云未返回taskId: ${JSON.stringify(d)}`)
+        return NextResponse.json({ success: true, taskId, multi: false })
+      } else {
+        throw new Error('金山云视频生成至少需要1张参考图')
+      }
+    }
+
+    // ── 火山引擎（原逻辑）───────────────────────────────────────────────────
     const postUrl = `${origin}/api/v3/contents/generations/tasks`
     console.log('视频 POST 请求 URL:', postUrl)
 
-    const finalPrompt = prompt + (negativePrompt ? ` 必须避免：${negativePrompt}` : '')
     const contentArray: any[] = [{ type: 'text', text: finalPrompt }]
 
     if (referenceImages && Array.isArray(referenceImages)) {
