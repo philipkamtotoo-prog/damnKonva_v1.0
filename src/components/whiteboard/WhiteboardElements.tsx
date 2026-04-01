@@ -162,6 +162,13 @@ export const ArrowItem = ({ arrow, items, onContextMenu }: any) => {
 export const VideoProxyItem = ({ item, isSelected, isLinkingMode, isReadOnly, onSelect, onMouseDown, onMouseUp, onContextMenu, onChange }: any) => {
   const shapeRef = useRef<any>(null)
   const trRef = useRef<any>(null)
+  const [dispW, setDispW] = useState(item.width || 400)
+  const [dispH, setDispH] = useState(item.height || 225)
+
+  useEffect(() => {
+    setDispW(item.width || 400)
+    setDispH(item.height || 225)
+  }, [item.width, item.height])
 
   useEffect(() => {
     if (isSelected && trRef.current && shapeRef.current) {
@@ -190,23 +197,28 @@ export const VideoProxyItem = ({ item, isSelected, isLinkingMode, isReadOnly, on
           const node = shapeRef.current
           const scaleX = node.scaleX()
           const scaleY = node.scaleY()
+          const newW = Math.max(100, node.width() * scaleX)
+          const newH = Math.max(60, node.height() * scaleY)
           node.scaleX(1); node.scaleY(1)
+          node.width(newW); node.height(newH)
+          setDispW(newW)
+          setDispH(newH)
           onChange(item.id, {
             x: node.x(), y: node.y(),
-            width:  Math.max(100, node.width()  * scaleX),
-            height: Math.max(60,  node.height() * scaleY)
+            width:  newW,
+            height: newH
           })
         }}
       >
         <Rect
-          width={item.width || 400}
-          height={item.height || 225}
+          width={dispW}
+          height={dispH}
           fill="rgba(0,0,0,0.05)"
           stroke={isSelected && !isReadOnly ? '#10b981' : undefined}
           strokeWidth={isSelected && !isReadOnly ? 4 : 0}
           cornerRadius={4}
         />
-        <Group x={(item.width || 400) / 2 - 16} y={(item.height || 225) / 2 - 16} listening={false}>
+        <Group x={dispW / 2 - 16} y={dispH / 2 - 16} listening={false}>
           <Circle radius={20} fill="rgba(0,0,0,0.5)" />
           <Line points={[-8, -11, 11, 0, -8, 11]} fill="white" closed />
         </Group>
